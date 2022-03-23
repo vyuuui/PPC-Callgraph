@@ -2,22 +2,21 @@ module IntervalTree
 ( insert
 , query
 , nearestAbove
-, null
+, empty
 , singleton
 , Interval
 , IntervalNode
 ) where
 
 import Data.Ix (inRange, Ix)
-import Prelude hiding (null, singleton)
 
 type Interval a = (a, a)
 
 data IntervalNode a = Leaf (Interval a) | Node (Interval a) (IntervalNode a) (IntervalNode a) | Null
     deriving (Show)
 
-null :: (Ix a) => IntervalNode a
-null = Null
+empty :: (Ix a) => IntervalNode a
+empty = Null
 
 singleton :: (Ix a) => Interval a -> IntervalNode a
 singleton = Leaf
