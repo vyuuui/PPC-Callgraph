@@ -3,8 +3,8 @@ module PpcAnalyze
 , SubChunkInfo(..)
 , SubInfo(..)
 , SubroutineGraph
-, parseFullSubroutineDriver
-, parseSubroutineChunkDriver
+, parseSubroutineChunk
+, parseFullSubroutine
 , generateCallgraph
 ) where
 
@@ -43,22 +43,23 @@ data GraphContext = GraphContext { pendingCalls :: S.Set Word32, subGraph :: Sub
 
 
 instance Show SubChunkInfo where
-    show info = L.intercalate "\n" $ fmap ($ "\t") stringFns
+    show info = L.intercalate "\n" $ fmap ($ "    ") stringFns
       where
-        cjSep x = "chunkJumps:"
-        ccSep x = "chunkCalls:"
-        crSep x = "chunkPhysRegion:"
+        cjSep _ = "chunkJumps:"
+        ccSep _ = "chunkCalls:"
+        crSep _ = "chunkPhysRegion:"
+        cvSep _ = "chunkVirtRegion:"
         showRegion :: IT.Interval Word32 -> [ShowS]
         showRegion (l, r) = [showHex l, showHex r]
-        stringFns = [cjSep] ++ fmap showHex (chunkJumps info) ++ [ccSep] ++ fmap showHex (chunkCalls info) ++ [crSep] ++ showRegion (chunkPhysRegion info)
+        stringFns = [cjSep] ++ fmap showHex (chunkJumps info) ++ [ccSep] ++ fmap showHex (chunkCalls info) ++ [cvSep] ++ showRegion (chunkVirtRegion info) ++ [crSep] ++ showRegion (chunkPhysRegion info)
 
 instance Show SubInfo where
     show info = ssSep ++ showHex (subStart info) (sjSep ++ S.foldr' hexAndNewline (scSep ++ S.foldr' hexAndNewline "" (subCalls info)) (subJumps info))
       where
-        ssSep = "\nsubStart:"
+        ssSep = "\nsubStart:\n    "
         sjSep = "\nsubJumps:"
         scSep = "\nsubCalls:"
-        hexAndNewline = (fmap . fmap) ("\n\t" ++) showHex
+        hexAndNewline = (fmap . fmap) ("\n    " ++) showHex
 
 
 accrueChunk :: SubInfo -> SubChunkInfo -> SubInfo
@@ -105,13 +106,11 @@ parseSubroutineChunk vStart pStart pEnd mem =
     expandInterval :: IT.Interval Word32 -> IT.Interval Word32
     expandInterval (l, r) = (l, r + 4)
 
-parseFullSubroutine :: Word32 -> Word32 -> VirtualMapping -> SubInfo
-parseFullSubroutine vStart pStart mapping =
+parseFullSubroutine :: Word32 -> VirtualMapping -> SubInfo
+parseFullSubroutine vStart mapping =
     until (null . subJumps) (\info -> S.foldl' parseJump info $ subJumps info) initialInfo
   where
-    initialInfo = SubInfo (S.fromList jmps) (S.fromList calls) (IT.singleton piv) vStart
-      where
-        (SubChunkInfo jmps calls viv piv) = parseSubroutineChunk vStart pStart (maxBound :: Word32) (rawData mapping)
+    initialInfo = SubInfo (S.singleton vStart) S.empty IT.empty vStart
 
     -- | Parse only if both unvisited and a valid virtual address
     parseJump :: SubInfo -> Word32 -> SubInfo
@@ -144,21 +143,9 @@ generateCallgraph vStart mapping =
     subGraph $ until (null . pendingCalls) (\context -> S.foldl' parseCall context $ pendingCalls context) (GraphContext (S.singleton vStart) M.empty)
   where
     parseCall :: GraphContext -> Word32 -> GraphContext
-    parseCall (GraphContext calls graph) vStart = case toPhysAddr mapping vStart of
-        Nothing       -> contextSubStart
-        (Just pStart) -> if M.member vStart graph
-                         then contextSubStart
-                         else accrueSub contextSubStart (parseFullSubroutine vStart pStart mapping)
+    parseCall (GraphContext calls graph) vStart =
+        if M.member vStart graph
+        then contextSubStart
+        else accrueSub contextSubStart (parseFullSubroutine vStart mapping)
       where
         contextSubStart = GraphContext (S.delete vStart calls) graph
-
-
-parseSubroutineChunkDriver :: Word32 -> VirtualMapping -> Maybe SubChunkInfo
-parseSubroutineChunkDriver vStart mapping =
-    toPhysAddr mapping vStart >>= \pStart ->
-    return $ parseSubroutineChunk vStart pStart (maxBound :: Word32) (rawData mapping)
-
-parseFullSubroutineDriver :: Word32 -> VirtualMapping -> Maybe SubInfo
-parseFullSubroutineDriver vStart mapping =
-    toPhysAddr mapping vStart >>= \pStart ->
-    return $ parseFullSubroutine vStart pStart mapping
